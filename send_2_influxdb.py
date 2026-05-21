@@ -1,12 +1,11 @@
-import serial
+# Получение показаний температуры, скорости оборотов вентилятора и отправка данных в InfluxDB
+
 from datetime import datetime
 import time
-
 import subprocess
-import sys
 
-import json
 from influxdb import InfluxDBClient
+
 
 
 # --- Настройки InfluxDB ---

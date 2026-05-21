@@ -1,6 +1,5 @@
-import serial
-import matplotlib.pyplot as plt
-# from datetime import datetime
+# Получение показаний температуры и отображение графика
+
 import time
 
 import subprocess
