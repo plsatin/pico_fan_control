@@ -59,24 +59,35 @@ def send_to_influxdb(data):
 
 
 def fetch_fan_info():
-    
+    temp_from_pico = 0.0
+    temp_from_pico_prev = 0.0
+    no_error_data = True
+
     cmd = 'python fan_control.py temperature'
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
         values = result.stdout.strip()
 
-        print(values)
+        try:
+            print(values) # Для отладки
+            temp_from_pico = float(values)
+            no_error_data = True
+        except Exception as exc:
+            print(f"\n[!] Возникли ошибки: {exc}")
+            temp_from_pico = temp_from_pico_prev
+            no_error_data = False
 
-        if len(values) < 1:
+        if no_error_data:
+            data = {
+                "timestamp": datetime.now().timestamp() * 1000,  # В миллисекундах для Chart.js
+                "temperature": temp_from_pico,
+                "fanSpeedPercentage": 0.0
+            }
+
+            return data
+        else:
             return None
-        
-        data = {
-            "timestamp": datetime.now().timestamp() * 1000,  # В миллисекундах для Chart.js
-            "temperature": float(values),
-            "fanSpeedPercentage": 0.0
-        }
 
-        return data
     except subprocess.CalledProcessError as e:
         print(f"App fan_control error: {e}")
         return None

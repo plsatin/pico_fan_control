@@ -1,37 +1,37 @@
+# Управление умным вентилятором
 import time
 import serial
 import sys
 
+try:
+    ser = serial.Serial('COM5', 115200, timeout=0.01)  # open serial port
 
-ser = serial.Serial('COM5', 115200, timeout=0.01)  # open serial port
+    arg_value = str(sys.argv[1]) + '\n\r'
+    # command = arg_value.to_bytes(2, byteorder='big')
+    command = arg_value.encode() 
 
-arg_value = str(sys.argv[1]) + '\n\r'
-# command = arg_value.to_bytes(2, byteorder='big')
-command = arg_value.encode() 
+    # print(f"Sending Command: [{command}]")
+    ser.write(command)     # write a string
 
-# command = b'0\n\r'
-# command = b'temperature\n\r'
-# command = b'65535\n\r'
+    ended = False
+    reply = b''
 
-# print(f"Sending Command: [{command}]")
-ser.write(command)     # write a string
+    for _ in range(len(command)):
+        a = ser.read() # Read the loopback chars and ignore
 
-ended = False
-reply = b''
+    while True:
+        a = ser.read()
+        if a== b'\r':
+            break
+        else:
+            reply += a
 
-for _ in range(len(command)):
-    a = ser.read() # Read the loopback chars and ignore
+        time.sleep(0.01)
 
-while True:
-    a = ser.read()
-    if a== b'\r':
-        break
-    else:
-        reply += a
+    ser.close()
 
-    time.sleep(0.01)
+    string_data = reply.decode()
+    print(f"{string_data}")
 
-ser.close()
-
-string_data = reply.decode()
-print(f"{string_data}")
+except Exception as exc:
+    print(f"\n[!] Возникли ошибки: {exc}")
