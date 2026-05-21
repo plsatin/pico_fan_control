@@ -35,3 +35,4 @@ try:
 
 except Exception as exc:
     print(f"\n[!] Возникли ошибки: {exc}")
+    ser.close()

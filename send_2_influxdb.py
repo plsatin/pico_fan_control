@@ -60,7 +60,7 @@ def send_to_influxdb(data):
 
 def fetch_fan_info():
     temp_from_pico = 0.0
-    temp_from_pico_prev = 0.0
+    # temp_from_pico_prev = 0.0
     no_error_data = True
 
     cmd = 'python fan_control.py temperature'
@@ -74,14 +74,14 @@ def fetch_fan_info():
             no_error_data = True
         except Exception as exc:
             print(f"\n[!] Возникли ошибки: {exc}")
-            temp_from_pico = temp_from_pico_prev
+            temp_from_pico = None
             no_error_data = False
 
         if no_error_data:
             data = {
                 "timestamp": datetime.now().timestamp() * 1000,  # В миллисекундах для Chart.js
                 "temperature": temp_from_pico,
-                "fanSpeedPercentage": 0.0
+                "fanSpeedPercentage": None
             }
 
             return data
