@@ -35,20 +35,20 @@ while True:
     print(f'Температура: {temp_from_pico}')
     # print(temp_from_pico)
 
-    # Создание графика
-    plt.plot(time_list, temperature)
+    # # Создание графика
+    # plt.plot(time_list, temperature)
 
-    # Настройка заголовка и меток осей
-    plt.title('График температуры')
-    plt.xlabel('Время (5 сек.)')
-    plt.ylabel('Температура (°C)')
+    # # Настройка заголовка и меток осей
+    # plt.title('График температуры')
+    # plt.xlabel('Время (5 сек.)')
+    # plt.ylabel('Температура (°C)')
 
-    # Отображение графика
-    # plt.show()
+    # # Отображение графика
+    # # plt.show()
 
-    ## plt.show - блокирует выполнение программы поэтому используем pause - показывая график на 5 сек.
-    plt.pause(5)
-    plt.close()
+    # ## plt.show - блокирует выполнение программы поэтому используем pause - показывая график на 5 сек.
+    # plt.pause(5)
+    # plt.close()
 
     # time.sleep(5.0)
 
