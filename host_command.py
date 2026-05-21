@@ -9,7 +9,9 @@ ser = serial.Serial('COM5', 115200, timeout=0.01)  # open serial port
 
 # command = arg_value.encode() 
 
-command = b'10000\n\r'
+command = b'0\n\r'
+
+# command = b'65535\n\r'
 
 print(f"Sending Command: [{command}]")
 ser.write(command)     # write a string
@@ -31,6 +33,6 @@ while True:
     time.sleep(0.01)
 
 string_data = reply.decode()
-print(f"Reply was: [{string_data}]")
+print(f"Reply was: {string_data}")
 
 ser.close()

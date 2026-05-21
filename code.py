@@ -43,7 +43,7 @@ while True:
         # Sometimes Windows sends an extra (or missing) newline - ignore them
         if value == "":
             continue
-        print("RX: {}".format(value))
+        print("The command [{}] has been accepted.".format(value))
         # print("Command recivied")
 
         try:
