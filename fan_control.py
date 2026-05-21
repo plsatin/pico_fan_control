@@ -31,7 +31,7 @@ while True:
 
     time.sleep(0.01)
 
+ser.close()
+
 string_data = reply.decode()
 print(f"{string_data}")
-
-ser.close()

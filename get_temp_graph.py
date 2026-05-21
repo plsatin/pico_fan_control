@@ -27,7 +27,7 @@ while True:
     time_list.append(counter)
 
     try:
-        temp_from_pico = subprocess.run([sys.executable, "host_command.py", "temperature"], capture_output=True, text=True).stdout.strip()
+        temp_from_pico = subprocess.run([sys.executable, "fan_control.py", "temperature"], capture_output=True, text=True).stdout.strip()
         temp_from_pico = float(temp_from_pico)
         temperature.append(temp_from_pico)
         temp_from_pico_prev = temp_from_pico
