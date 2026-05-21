@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+
+    <head>
+    </head>
+    <body>
+        <div class="container">
+            <!-- <h2>График температуры</h2> -->
+            <img id="plotImage" src="temperature_plot.png" alt="График температуры" />
+        </div>
+
+
+    </body>
+
+    <script>
+        function updateImage() {
+            var image = document.getElementById('plotImage');
+            // Добавляем параметр ?t=timestamp, чтобы браузер запрашивал новую версию, а не брал из кэша
+            image.src = "temperature_plot.png?t=" + new Date().getTime();
+        }
+
+        // Вызывает функцию updateImage каждую 1000 миллисекунд (1 секунда)
+        setInterval(updateImage, 10000);
+    </script>
+
+</html>

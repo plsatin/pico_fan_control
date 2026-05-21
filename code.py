@@ -37,7 +37,7 @@ relay_1.direction = Direction.OUTPUT
 
 
 def on_startup():
-    # print("Start system.... Fan running at 100% speed")
+    print("Start system.... Fan running at 100% speed on 3 seconds")
     # Set the fan speed (0 to 65535)
     # Example: 50% speed is 32767
     fan_pin.duty_cycle = 65535
@@ -61,25 +61,30 @@ on_startup()
 ds18 = DS18X20(ow_bus, ow_bus.scan()[0])
 
 
+print(f'Ожидаем команду ... ')
 
 # Main loop to print the temperature every second.
 while True:
-    if ds18.temperature > 26.0:
-        # print(f"Температура ({ds18.temperature:0.3f}C) выше нормы!")
-        print(str(ds18.temperature))
-        # relay_1.value = True
+    # print(f'Ожидаем команду ... ')
+    # time.sleep(2)
+    if supervisor.runtime.serial_bytes_available:
+        value = input().strip()
+        # Sometimes Windows sends an extra (or missing) newline - ignore them
+        if value == "":
+            continue
+        if value == "temperature":
+            print(str(ds18.temperature))
+            continue
 
-        fan_pin.duty_cycle = 65535
-        led.value = True
+        print("The command [{}] has been accepted.".format(value))
+        # print("Command recivied")
 
-
-    else:
-        # print(f"Температура: {ds18.temperature:0.3f}C")
-        print(str(ds18.temperature))
-        # relay_1.value = False
-
-        fan_pin.duty_cycle = 0
-        led.value = False
-
-
-    time.sleep(5.0)
+        try:
+            if int(value) == 0:
+                fan_pin.duty_cycle = int(value)
+                led.value = False
+            else:
+                fan_pin.duty_cycle = int(value)
+                led.value = True
+        except Exception as exc:
+            print(f"\n[!] Возникли ошибки: {exc}")
