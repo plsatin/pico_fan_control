@@ -1,10 +1,7 @@
-# SPDX-FileCopyrightText: 2020 ladyada for Adafruit Industries
-# SPDX-License-Identifier: MIT
+## Smart-Fan
+## 22.05.2025 [plsatin]
 
-# Simple demo of printing the temperature from the first found DS18x20 sensor every second.
-# Author: Tony DiCola
 
-# A 4.7Kohm pullup between DATA and POWER is REQUIRED!
 
 import time
 import board
@@ -25,19 +22,22 @@ led.direction = digitalio.Direction.OUTPUT
 # Set up PWM on GP0 with a standard 25kHz frequency for fans
 fan_pin = pwmio.PWMOut(board.GP0, frequency=25000, duty_cycle=0)
 
+# Для будующего функционала "Тахометр"
+tach_pin = digitalio.DigitalInOut(board.GP1)
+tach_pin.direction = digitalio.Direction.INPUT
+tach_pin.pull = digitalio.Pull.UP
+
+
 
 # Initialize one-wire bus on board pin GP22.
 ow_bus = OneWireBus(board.GP22)
 
-# Реле на GP15
-relay_1 = DigitalInOut(board.GP15)
-relay_1.direction = Direction.OUTPUT
-
-
+# Переменная для установки PWM на вентиляторе
+pwm_set_value = 0
 
 
 def on_startup():
-    print("Start system.... Fan running at 100% speed on 3 seconds")
+    print("Запуск системы... Вентилятор работает на 100% скорости в течение 3 секунд.")
     # Set the fan speed (0 to 65535)
     # Example: 50% speed is 32767
     fan_pin.duty_cycle = 65535
@@ -76,15 +76,27 @@ while True:
             print(str(ds18.temperature))
             continue
 
-        print("The command [{}] has been accepted.".format(value))
+        if value == "pwm":
+            print(str(pwm_set_value))
+            continue
+
+        if value == "temperature,pwm":
+            print(f"{str(ds18.temperature)};{str(pwm_set_value)}")
+            continue
+
+
+        print("Команда [{}] принята.".format(value))
         # print("Command recivied")
 
         try:
             if int(value) == 0:
                 fan_pin.duty_cycle = int(value)
                 led.value = False
+                pwm_set_value = int(value)
             else:
                 fan_pin.duty_cycle = int(value)
                 led.value = True
+                pwm_set_value = int(value)
+            
         except Exception as exc:
             print(f"\n[!] Возникли ошибки: {exc}")

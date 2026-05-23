@@ -17,7 +17,7 @@ try:
     reply = b''
 
     for _ in range(len(command)):
-        a = ser.read() # Read the loopback chars and ignore
+        a = ser.readline() # Read the loopback chars and ignore
 
     while True:
         a = ser.read()
@@ -30,7 +30,7 @@ try:
 
     ser.close()
 
-    string_data = reply.decode()
+    string_data = reply.decode('utf-8', errors='ignore').strip()
     print(f"{string_data}")
 
 except Exception as exc:
