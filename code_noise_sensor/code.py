@@ -37,7 +37,8 @@ while True:
     
     # Вывод уровня шума в консоль
     # Можно открыть Plotter в Mu Editor для просмотра графика
-    print((volts,))
+    print(f">pin26:{volts}\r\n")
+    # print((volts,))
     
     # Небольшая пауза между замерами шума
     time.sleep(0.1)
