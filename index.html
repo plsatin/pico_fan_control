@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GPU Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        canvas { max-width: 100%; height: 400px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="card">
+    <div class="card-header">GPU0: NVIDIA Tesla P100-PCIE-16GB</div>
+    <div class="card-body"><canvas id="gpuChart"></canvas></div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+  // Подключаемся к серверу (автоматически определит ws/wss и порт)
+  const socket = io();
+
+  const ctx = document.getElementById('gpuChart').getContext('2d');
+  const data = {
+      labels: [],
+      datasets: [
+          { label: 'Temperature (°C)', borderColor: 'red', fill: false, data: [] },
+          { label: 'GPU Util (%)', borderColor: 'green', fill: false, data: [] },
+          { label: 'Memory Util (%)', borderColor: 'blue', fill: false, data: [] },
+          { label: 'Power (W)', borderColor: 'purple', fill: false, data: [] }
+      ]
+  };
+
+  const chart = new Chart(ctx, {
+      type: 'line',
+      data,
+      options: {
+          scales: {
+              x: { type: 'time', time: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } } }
+          }
+      }
+  });
+
+  // Обрабатываем входящие данные от сервера
+  socket.on('gpu_data', (msg) => {
+      const time = new Date(msg.timestamp);
+      data.labels.push(time);
+      data.datasets[0].data.push(msg.temperature);
+      data.datasets[1].data.push(msg.gpuUtil);
+      data.datasets[2].data.push(msg.memUtil);
+      data.datasets[3].data.push(msg.power);
+
+      if (data.labels.length > 50) {
+          data.labels.shift();
+          data.datasets.forEach(ds => ds.data.shift());
+      }
+      chart.update();
+  });
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
+
