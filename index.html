@@ -1,69 +1,862 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>GPU Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        canvas { max-width: 100%; height: 400px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pico Fan Control</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg:            #0b0e14;
+      --bg-elev:      #151921;
+      --bg-input:     #0f131a;
+      --border:        #232834;
+      --border-strong: #2d3340;
+      --text:          #e8eaed;
+      --text-dim:      #8a93a3;
+      --text-faint:    #555c6a;
+      --accent:        #5b9dff;
+      --accent-soft:   rgba(91, 157, 255, 0.12);
+      --gpu:           #f5a44d;
+      --pico:          #ef5d7e;
+      --fan:           #4ec5d6;
+      --success:       #3ec295;
+      --danger:        #e8555b;
+      --radius:        14px;
+      --radius-sm:     8px;
+      --shadow:        0 1px 3px rgba(0,0,0,0.25);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Display",
+                   Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      min-height: 100vh;
+    }
+    .app {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 64px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 14px var(--accent);
+    }
+    .brand-title {
+      font-size: 18px; font-weight: 600; letter-spacing: -0.01em;
+    }
+    .brand-sub {
+      font-size: 12px; color: var(--text-dim); margin-top: 1px;
+    }
+    .status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--text-dim);
+      padding: 6px 12px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-faint);
+      transition: background 0.3s;
+    }
+    .status-dot.live { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .status-dot.down { background: var(--danger); }
+
+    /* KPI grid */
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .kpi {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .kpi-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .kpi-value {
+      font-size: 32px;
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+    .kpi-value .unit {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text-dim);
+      margin-left: 2px;
+    }
+    .kpi-sub {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .kpi.gpu .kpi-value { color: var(--gpu); }
+    .kpi.pico .kpi-value { color: var(--pico); }
+    .kpi.fan .kpi-value { color: var(--fan); }
+    .kpi.util .kpi-value { color: var(--accent); }
+    .kpi-bar {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 2px;
+      background: var(--border);
+    }
+    .kpi-bar > i {
+      display: block; height: 100%;
+      background: currentColor;
+      transition: width 0.4s ease;
+    }
+    .kpi.gpu .kpi-bar > i { background: var(--gpu); }
+    .kpi.pico .kpi-bar > i { background: var(--pico); }
+    .kpi.fan .kpi-bar > i { background: var(--fan); }
+    .kpi.util .kpi-bar > i { background: var(--accent); }
+
+    /* Panels */
+    .panel {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      margin-bottom: 16px;
+    }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .panel-title {
+      font-size: 13px; font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+    .panel-sub {
+      font-size: 12px; color: var(--text-dim);
+    }
+    .chart-wrap { position: relative; height: 320px; }
+
+    /* Mode toggle */
+    .mode-toggle {
+      display: inline-flex;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 3px;
+      gap: 2px;
+    }
+    .mode-toggle button {
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      padding: 7px 18px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.18s;
+    }
+    .mode-toggle button:hover { color: var(--text); }
+    .mode-toggle button.active {
+      background: var(--accent);
+      color: white;
+    }
+    .mode-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .mode-pill .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+    }
+    .mode-pill.manual .dot { background: var(--fan); }
+
+    /* Sliders */
+    .sliders {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .slider {
+      display: grid;
+      grid-template-columns: 160px 1fr 80px;
+      align-items: center;
+      gap: 16px;
+    }
+    .slider > label {
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+    .slider .val {
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+      color: var(--text);
+      text-align: right;
+      padding: 4px 10px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      background: var(--border);
+      border-radius: 999px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 0 0 4px rgba(91,157,255,0.18);
+      transition: transform 0.1s, box-shadow 0.15s;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+      box-shadow: 0 0 0 6px rgba(91,157,255,0.24);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border: none;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    /* Curve preview */
+    .curve {
+      margin-top: 18px;
+      padding: 16px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+    .curve-head {
+      display: flex; justify-content: space-between;
+      font-size: 12px; color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .curve svg { width: 100%; height: 80px; display: block; }
+
+    /* Actions */
+    .actions {
+      display: flex; align-items: center; gap: 12px;
+      margin-top: 20px;
+    }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.05s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border-strong);
+      color: var(--text);
+    }
+    .dirty { color: var(--fan); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+    .dirty::before {
+      content: '';
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--fan);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 13px;
+      color: var(--text);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: all 0.25s;
+      pointer-events: none;
+      z-index: 1000;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { border-color: var(--danger); color: var(--danger); }
+    .toast.success { border-color: var(--success); }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-faint);
+      margin-top: 32px;
+    }
+
+    /* Responsive */
+    @media (max-width: 800px) {
+      .kpis { grid-template-columns: repeat(2, 1fr); }
+      .slider { grid-template-columns: 1fr 80px; }
+      .slider > label { grid-column: 1 / -1; }
+    }
+    @media (max-width: 480px) {
+      .kpis { grid-template-columns: 1fr; }
+      .app { padding: 20px 16px 48px; }
+    }
+  </style>
 </head>
 <body>
+  <div class="app">
 
-<div class="container">
-  <div class="card">
-    <div class="card-header">GPU0: NVIDIA Tesla P100-PCIE-16GB</div>
-    <div class="card-body"><canvas id="gpuChart"></canvas></div>
+    <header class="header">
+      <div class="brand">
+        <div class="brand-dot"></div>
+        <div>
+          <div class="brand-title">Pico Fan Control</div>
+          <div class="brand-sub">Smart temperature-driven fan</div>
+        </div>
+      </div>
+      <div class="status" id="conn-status">
+        <div class="status-dot" id="conn-dot"></div>
+        <span id="conn-text">Подключение…</span>
+      </div>
+    </header>
+
+    <section class="kpis">
+      <div class="kpi gpu">
+        <div class="kpi-label">GPU Temperature</div>
+        <div class="kpi-value" id="kpi-gpu-temp">—<span class="unit">°C</span></div>
+        <div class="kpi-sub" id="kpi-gpu-sub">ожидание данных</div>
+        <div class="kpi-bar"><i id="kpi-gpu-bar" style="width: 0%"></i></div>
+      </div>
+      <div class="kpi pico">
+        <div class="kpi-label">Pico Temperature</div>
+        <div class="kpi-value" id="kpi-pico-temp">—<span class="unit">°C</span></div>
+        <div class="kpi-sub" id="kpi-pico-sub">DS18B20 · мониторинг</div>
+        <div class="kpi-bar"><i id="kpi-pico-bar" style="width: 0%"></i></div>
+      </div>
+      <div class="kpi fan">
+        <div class="kpi-label">Fan Speed</div>
+        <div class="kpi-value" id="kpi-fan">—<span class="unit">%</span></div>
+        <div class="kpi-sub" id="kpi-fan-sub">ожидание данных</div>
+        <div class="kpi-bar"><i id="kpi-fan-bar" style="width: 0%"></i></div>
+      </div>
+      <div class="kpi util">
+        <div class="kpi-label">GPU Util</div>
+        <div class="kpi-value" id="kpi-gpu-util">—<span class="unit">%</span></div>
+        <div class="kpi-sub" id="kpi-gpu-power">ожидание данных</div>
+        <div class="kpi-bar"><i id="kpi-gpu-util-bar" style="width: 0%"></i></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="panel-title">Real-time Metrics</div>
+        <div class="panel-sub" id="chart-window">последние 2 мин</div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Fan Control</div>
+          <div class="panel-sub">Кривая оборотов по температуре <b>GPU</b> (nvidia-smi)</div>
+        </div>
+        <div id="mode-pill" class="mode-pill"><span class="dot"></span><span>Auto</span></div>
+      </div>
+
+      <div style="display: flex; gap: 18px; align-items: center; flex-wrap: wrap;">
+        <div class="mode-toggle" id="mode-toggle">
+          <button data-mode="auto" class="active">Auto</button>
+          <button data-mode="manual">Manual</button>
+        </div>
+      </div>
+
+      <div class="sliders" id="auto-controls">
+        <div class="slider">
+          <label>Start temperature</label>
+          <input type="range" id="s-temp-min" min="30" max="90" step="1" value="50">
+          <div class="val" id="s-temp-min-val">50 °C</div>
+        </div>
+        <div class="slider">
+          <label>End temperature</label>
+          <input type="range" id="s-temp-max" min="30" max="100" step="1" value="75">
+          <div class="val" id="s-temp-max-val">75 °C</div>
+        </div>
+        <div class="slider">
+          <label>Min PWM</label>
+          <input type="range" id="s-pwm-min" min="0" max="100" step="1" value="30">
+          <div class="val" id="s-pwm-min-val">30 %</div>
+        </div>
+        <div class="slider">
+          <label>Max PWM</label>
+          <input type="range" id="s-pwm-max" min="0" max="100" step="1" value="100">
+          <div class="val" id="s-pwm-max-val">100 %</div>
+        </div>
+        <div class="slider">
+          <label>Hysteresis</label>
+          <input type="range" id="s-hysteresis" min="0" max="10" step="0.5" value="3">
+          <div class="val" id="s-hysteresis-val">3.0 °C</div>
+        </div>
+      </div>
+
+      <div class="sliders" id="manual-controls" style="display: none;">
+        <div class="slider">
+          <label>Manual PWM</label>
+          <input type="range" id="s-manual-pwm" min="0" max="100" step="1" value="0">
+          <div class="val" id="s-manual-pwm-val">0 %</div>
+        </div>
+      </div>
+
+      <div class="curve">
+        <div class="curve-head">
+          <span>Кривая ШИМ (от температуры GPU)</span>
+          <span id="curve-label">50 °C → 30 %, 75 °C → 100 %</span>
+        </div>
+        <svg id="curve-svg" viewBox="0 0 400 80" preserveAspectRatio="none">
+          <line x1="0" y1="0" x2="400" y2="0" stroke="var(--border)" stroke-width="0.5"/>
+          <line x1="0" y1="80" x2="400" y2="80" stroke="var(--border)" stroke-width="0.5"/>
+          <line x1="0" y1="40" x2="400" y2="40" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2 4"/>
+          <path id="curve-path" d="" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+          <path id="curve-fill" d="" fill="url(#curve-grad)" opacity="0.18"/>
+          <defs>
+            <linearGradient id="curve-grad" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stop-color="var(--accent)"/>
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="apply-btn">Apply changes</button>
+        <button class="btn btn-ghost" id="reset-btn">Reset</button>
+        <span id="dirty" class="dirty" style="display: none;">Есть несохранённые изменения</span>
+      </div>
+    </section>
+
+    <div class="footer">Pico Fan Control · v2.0</div>
   </div>
-</div>
 
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script>
-  // Подключаемся к серверу (автоматически определит ws/wss и порт)
-  const socket = io();
+  <div class="toast" id="toast"></div>
 
-  const ctx = document.getElementById('gpuChart').getContext('2d');
-  const data = {
-      labels: [],
-      datasets: [
-          { label: 'Temperature (°C)', borderColor: 'red', fill: false, data: [] },
-          { label: 'GPU Util (%)', borderColor: 'green', fill: false, data: [] },
-          { label: 'Memory Util (%)', borderColor: 'blue', fill: false, data: [] },
-          { label: 'Power (W)', borderColor: 'purple', fill: false, data: [] }
-      ]
-  };
+  <script>
+    'use strict';
 
-  const chart = new Chart(ctx, {
-      type: 'line',
-      data,
-      options: {
+    // ---------- State ----------
+    const state = {
+      config: null,
+      serverConfig: null,
+      buffer: [],
+      chart: null,
+      socket: null,
+      lastGpuTs: 0,
+      lastFanTs: 0,
+    };
+    const MAX_POINTS = 60; // ~2 минуты при 2с интервале
+
+    // ---------- Chart ----------
+    function initChart() {
+      const ctx = document.getElementById('chart').getContext('2d');
+      const gradGpu = ctx.createLinearGradient(0, 0, 0, 320);
+      gradGpu.addColorStop(0, 'rgba(245,164,77,0.18)');
+      gradGpu.addColorStop(1, 'rgba(245,164,77,0)');
+      const gradPico = ctx.createLinearGradient(0, 0, 0, 320);
+      gradPico.addColorStop(0, 'rgba(239,93,126,0.15)');
+      gradPico.addColorStop(1, 'rgba(239,93,126,0)');
+      const gradFan = ctx.createLinearGradient(0, 0, 0, 320);
+      gradFan.addColorStop(0, 'rgba(78,197,214,0.15)');
+      gradFan.addColorStop(1, 'rgba(78,197,214,0)');
+
+      state.chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'GPU °C',     data: [], borderColor: '#f5a44d', backgroundColor: gradGpu,  yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
+            { label: 'Pico °C',    data: [], borderColor: '#ef5d7e', backgroundColor: gradPico, yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
+            { label: 'Fan %',      data: [], borderColor: '#4ec5d6', backgroundColor: gradFan,  yAxisID: 'pct',  tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
+            { label: 'Fan target', data: [], borderColor: '#4ec5d6', backgroundColor: 'transparent', yAxisID: 'pct', tension: 0.35, borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, borderDash: [3, 3] },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 250 },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              position: 'top', align: 'end',
+              labels: { color: '#8a93a3', boxWidth: 10, boxHeight: 10, usePointStyle: true, padding: 16, font: { size: 12 } },
+            },
+            tooltip: {
+              backgroundColor: '#151921',
+              borderColor: '#2d3340',
+              borderWidth: 1,
+              padding: 10,
+              titleColor: '#e8eaed',
+              bodyColor: '#e8eaed',
+              cornerRadius: 8,
+              displayColors: true,
+              boxPadding: 4,
+            },
+          },
           scales: {
-              x: { type: 'time', time: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } } }
-          }
+            x: {
+              type: 'time',
+              time: { unit: 'minute', displayFormats: { minute: 'HH:mm', second: 'HH:mm:ss' }, tooltipFormat: 'HH:mm:ss' },
+              ticks: { color: '#555c6a', font: { size: 11 }, maxRotation: 0 },
+              grid: { color: 'rgba(255,255,255,0.04)', drawTicks: false },
+            },
+            temp: {
+              position: 'left',
+              ticks: { color: '#8a93a3', font: { size: 11 }, callback: v => v + '°C' },
+              grid: { color: 'rgba(255,255,255,0.04)', drawTicks: false },
+              title: { display: false },
+            },
+            pct: {
+              position: 'right',
+              min: 0, max: 100,
+              ticks: { color: '#8a93a3', font: { size: 11 }, callback: v => v + '%' },
+              grid: { display: false },
+              title: { display: false },
+            },
+          },
+        },
+      });
+    }
+
+    function pushPoint(fields) {
+      const now = fields.timestamp || Date.now();
+      let entry = state.buffer.find(d => Math.abs(d.timestamp - now) < 1500);
+      if (!entry) {
+        entry = { timestamp: now };
+        state.buffer.push(entry);
+        if (state.buffer.length > MAX_POINTS) state.buffer.shift();
       }
-  });
+      Object.assign(entry, fields);
 
-  // Обрабатываем входящие данные от сервера
-  socket.on('gpu_data', (msg) => {
-      const time = new Date(msg.timestamp);
-      data.labels.push(time);
-      data.datasets[0].data.push(msg.temperature);
-      data.datasets[1].data.push(msg.gpuUtil);
-      data.datasets[2].data.push(msg.memUtil);
-      data.datasets[3].data.push(msg.power);
+      const labels = state.buffer.map(d => new Date(d.timestamp));
+      const gpu  = state.buffer.map(d => d.gpuTemp  ?? null);
+      const pico = state.buffer.map(d => d.picoTemp ?? null);
+      const fan  = state.buffer.map(d => d.fanPct   ?? null);
+      const tgt  = state.buffer.map(d => d.fanTarget ?? null);
 
-      if (data.labels.length > 50) {
-          data.labels.shift();
-          data.datasets.forEach(ds => ds.data.shift());
+      state.chart.data.labels = labels;
+      state.chart.data.datasets[0].data = gpu;
+      state.chart.data.datasets[1].data = pico;
+      state.chart.data.datasets[2].data = fan;
+      state.chart.data.datasets[3].data = tgt;
+      state.chart.update('none');
+    }
+
+    // ---------- KPIs ----------
+    function setText(id, txt) { const e = document.getElementById(id); if (e) e.textContent = txt; }
+    function fmt(v, digits = 1) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(digits); }
+
+    function setKpiBig(id, value, unit) {
+      const e = document.getElementById(id);
+      if (!e) return;
+      if (value === null || value === undefined || isNaN(value)) {
+        e.innerHTML = '—<span class="unit">' + unit + '</span>';
+      } else {
+        e.innerHTML = Number(value).toFixed(1) + '<span class="unit">' + unit + '</span>';
       }
-      chart.update();
-  });
-</script>
+    }
+    function setBar(id, value, max) {
+      const e = document.getElementById(id);
+      if (!e) return;
+      const v = (value === null || value === undefined || isNaN(value)) ? 0 : Math.max(0, Math.min(100, value / max * 100));
+      e.style.width = v + '%';
+    }
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    function updateKpis(gpu, fan) {
+      if (gpu) {
+        setKpiBig('kpi-gpu-temp', gpu.temperature, '°C');
+        setBar('kpi-gpu-bar', gpu.temperature, 100);
+        setText('kpi-gpu-sub', `power ${fmt(gpu.power, 0)} W · mem ${fmt(gpu.memUsed, 0)} MB`);
+        setKpiBig('kpi-gpu-util', gpu.gpuUtil, '%');
+        setBar('kpi-gpu-util-bar', gpu.gpuUtil, 100);
+        setText('kpi-gpu-power', `mem util ${fmt(gpu.memUtil, 0)} %`);
+        pushPoint({ gpuTemp: gpu.temperature });
+      }
+      if (fan) {
+        // fan_data: {gpuTemperature, picoTemperature, fanSpeedPercentage, target_duty, targetPct, mode, ...}
+        const gpuT = fan.gpuTemperature;
+        const picoT = fan.picoTemperature;
+        if (gpuT !== undefined && gpuT !== null) {
+          setKpiBig('kpi-gpu-temp', gpuT, '°C');
+          setBar('kpi-gpu-bar', gpuT, 100);
+          pushPoint({ gpuTemp: gpuT });
+        }
+        if (picoT !== undefined && picoT !== null) {
+          setKpiBig('kpi-pico-temp', picoT, '°C');
+          setBar('kpi-pico-bar', picoT, 100);
+        }
+        setText('kpi-pico-sub', 'DS18B20 · мониторинг');
+        setKpiBig('kpi-fan', fan.fanSpeedPercentage, '%');
+        setBar('kpi-fan-bar', fan.fanSpeedPercentage, 100);
+        const mode = (fan.mode || 'auto').toUpperCase();
+        const tgtPct = fan.targetPct !== undefined
+          ? fan.targetPct
+          : Math.round((fan.target_duty || 0) / 65535 * 100);
+        setText('kpi-fan-sub', `${mode} · target ${tgtPct} %`);
+        pushPoint({
+          picoTemp: picoT,
+          fanPct: fan.fanSpeedPercentage,
+          fanTarget: tgtPct,
+        });
+      }
+    }
+
+    // ---------- Curve preview ----------
+    function drawCurve(cfg) {
+      const W = 400, H = 80;
+      const tMin = cfg.temp_min, tMax = cfg.temp_max;
+      const pMin = cfg.pwm_min, pMax = cfg.pwm_max;
+      const tLo = Math.max(0, tMin - cfg.hysteresis);
+      const tAll = Math.min(tMin, tLo);
+      const xLo = 10, xHi = W - 10;
+      const tScale = 100; // °C
+      const xMin = xLo + (tAll / tScale) * (xHi - xLo);
+      const x1   = xLo + (tMin  / tScale) * (xHi - xLo);
+      const x2   = xLo + (tMax  / tScale) * (xHi - xLo);
+      const yPwm = p => H - 4 - (p / 100) * (H - 8);
+      const yMin = yPwm(pMin);
+      const yMax = yPwm(pMax);
+
+      // Linear segment between (x1, yMin) and (x2, yMax)
+      const d = [
+        `M ${xMin.toFixed(1)} ${yMin.toFixed(1)}`,
+        `L ${x1.toFixed(1)} ${yMin.toFixed(1)}`,
+        `L ${x2.toFixed(1)} ${yMax.toFixed(1)}`,
+        `L ${xHi.toFixed(1)} ${yMax.toFixed(1)}`,
+      ].join(' ');
+      const fill = `M ${xMin.toFixed(1)} ${(H-4).toFixed(1)} ${d} L ${xHi} ${(H-4)} Z`;
+      document.getElementById('curve-path').setAttribute('d', d);
+      document.getElementById('curve-fill').setAttribute('d', fill);
+      document.getElementById('curve-label').textContent =
+        `${tMin}°C → ${pMin}%,  ${tMax}°C → ${pMax}%,  hyst ${cfg.hysteresis}°C`;
+    }
+
+    // ---------- Sliders ----------
+    const sliderIds = [
+      ['s-temp-min',    'temp_min',    '°C',  1],
+      ['s-temp-max',    'temp_max',    '°C',  1],
+      ['s-pwm-min',     'pwm_min',     '%',   0],
+      ['s-pwm-max',     'pwm_max',     '%',   0],
+      ['s-hysteresis',  'hysteresis',  '°C',  1],
+      ['s-manual-pwm',  'manual_pwm',  '%',   0],
+    ];
+    function bindSliders() {
+      sliderIds.forEach(([id, key, unit, digits]) => {
+        const input = document.getElementById(id);
+        const out = document.getElementById(id + '-val');
+        input.addEventListener('input', () => {
+          out.textContent = Number(input.value).toFixed(digits) + ' ' + unit;
+          markDirty();
+          drawCurve(readSliders());
+        });
+      });
+      document.getElementById('s-pwm-min').addEventListener('input', () => {
+        const pwmMin = +document.getElementById('s-pwm-min').value;
+        const pwmMaxInput = document.getElementById('s-pwm-max');
+        if (+pwmMaxInput.value < pwmMin) pwmMaxInput.value = pwmMin;
+        document.getElementById('s-pwm-max-val').textContent = pwmMaxInput.value + ' %';
+      });
+      document.getElementById('s-temp-min').addEventListener('input', () => {
+        const t = +document.getElementById('s-temp-min').value;
+        const tMaxInput = document.getElementById('s-temp-max');
+        if (+tMaxInput.value <= t) tMaxInput.value = t + 1;
+        document.getElementById('s-temp-max-val').textContent = tMaxInput.value + ' °C';
+      });
+    }
+    function readSliders() {
+      return {
+        mode: document.querySelector('#mode-toggle .active').dataset.mode,
+        temp_min:   +document.getElementById('s-temp-min').value,
+        temp_max:   +document.getElementById('s-temp-max').value,
+        pwm_min:    +document.getElementById('s-pwm-min').value,
+        pwm_max:    +document.getElementById('s-pwm-max').value,
+        hysteresis: +document.getElementById('s-hysteresis').value,
+        manual_pwm: +document.getElementById('s-manual-pwm').value,
+      };
+    }
+    function writeSliders(cfg) {
+      document.getElementById('s-temp-min').value   = cfg.temp_min;
+      document.getElementById('s-temp-max').value   = cfg.temp_max;
+      document.getElementById('s-pwm-min').value    = cfg.pwm_min;
+      document.getElementById('s-pwm-max').value    = cfg.pwm_max;
+      document.getElementById('s-hysteresis').value = cfg.hysteresis;
+      document.getElementById('s-manual-pwm').value = cfg.manual_pwm;
+      sliderIds.forEach(([id, _k, unit, digits]) => {
+        document.getElementById(id + '-val').textContent =
+          (+document.getElementById(id).value).toFixed(digits) + ' ' + unit;
+      });
+      setMode(cfg.mode, false);
+      drawCurve(cfg);
+    }
+    function markDirty() {
+      document.getElementById('dirty').style.display = 'inline-flex';
+    }
+    function clearDirty() {
+      document.getElementById('dirty').style.display = 'none';
+    }
+
+    // ---------- Mode toggle ----------
+    function setMode(mode, dirty = true) {
+      document.querySelectorAll('#mode-toggle button').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === mode);
+      });
+      document.getElementById('auto-controls').style.display   = mode === 'auto'   ? 'grid' : 'none';
+      document.getElementById('manual-controls').style.display = mode === 'manual' ? 'grid' : 'none';
+      const pill = document.getElementById('mode-pill');
+      pill.classList.toggle('manual', mode === 'manual');
+      pill.lastElementChild.textContent = mode === 'auto' ? 'Auto' : 'Manual';
+      if (dirty) markDirty();
+    }
+    function bindModeToggle() {
+      document.querySelectorAll('#mode-toggle button').forEach(btn => {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+      });
+    }
+
+    // ---------- Toast ----------
+    let toastTimer = null;
+    function toast(msg, kind = 'success') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show ' + kind;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { el.className = 'toast'; }, 2800);
+    }
+
+    // ---------- API ----------
+    async function loadConfig() {
+      try {
+        const r = await fetch('/api/config');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const cfg = await r.json();
+        state.serverConfig = cfg;
+        writeSliders(cfg);
+        clearDirty();
+      } catch (exc) {
+        toast('Не удалось загрузить конфигурацию: ' + exc.message, 'error');
+      }
+    }
+    async function saveConfig() {
+      const cfg = readSliders();
+      const btn = document.getElementById('apply-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cfg),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+        state.serverConfig = data;
+        writeSliders(data);
+        clearDirty();
+        toast('Конфигурация применена', 'success');
+      } catch (exc) {
+        toast('Ошибка: ' + exc.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Apply changes';
+      }
+    }
+    function bindActions() {
+      document.getElementById('apply-btn').addEventListener('click', saveConfig);
+      document.getElementById('reset-btn').addEventListener('click', () => {
+        if (state.serverConfig) writeSliders(state.serverConfig);
+        clearDirty();
+      });
+    }
+
+    // ---------- WebSocket ----------
+    function connect() {
+      const dot = document.getElementById('conn-dot');
+      const text = document.getElementById('conn-text');
+      text.textContent = 'Подключение…';
+      dot.className = 'status-dot';
+      const sock = io({ reconnection: true, reconnectionDelay: 1000 });
+      state.socket = sock;
+      sock.on('connect', () => {
+        dot.className = 'status-dot live';
+        text.textContent = 'В сети';
+      });
+      sock.on('disconnect', () => {
+        dot.className = 'status-dot down';
+        text.textContent = 'Нет соединения';
+      });
+      sock.on('connect_error', () => {
+        dot.className = 'status-dot down';
+        text.textContent = 'Сервер недоступен';
+      });
+      sock.on('gpu_data', d => updateKpis(d, null));
+      sock.on('fan_data', d => updateKpis(null, d));
+      sock.on('config_update', cfg => {
+        state.serverConfig = cfg;
+        writeSliders(cfg);
+        clearDirty();
+        toast('Конфигурация обновлена с сервера', 'success');
+      });
+    }
+
+    // ---------- Init ----------
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      bindSliders();
+      bindModeToggle();
+      bindActions();
+      connect();
+      loadConfig();
+    });
+  </script>
 </body>
 </html>
-

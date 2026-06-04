@@ -1,11 +1,16 @@
 """Сервис сбора метрик GPU (nvidia-smi) и вентилятора (Pico), запись в InfluxDB,
-веб-дашборд с трансляцией данных через WebSocket.
+веб-дашборд с трансляцией данных через WebSocket и автоматическое управление
+скоростью вентилятора по **температуре GPU**.
 
-Конфигурация - через переменные окружения. Файл .env читается автоматически
-(см. .env.example для шаблона). Все параметры можно переопределить через
-реальное окружение, например::
+Контур управления:
+    nvidia-smi --> shared GPU temp --> compute_target_duty --> PWM --> Pico
 
-    INFLUXDB_HOST=10.0.0.5 python service.py
+Температура DS18B20 на Pico отображается для мониторинга, но **не управляет**
+вентилятором. Это разделение нужно, чтобы вентилятор реагировал именно на
+нагрев GPU, а не на собственный нагрев рядом с корпусом.
+
+Конфигурация - через переменные окружения (см. .env.example). Параметры
+кривой вентилятора также доступны через HTTP API и WebSocket.
 """
 
 from __future__ import annotations
@@ -14,12 +19,15 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+import time
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 import serial
 from dotenv import load_dotenv
-from flask import Flask, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO
 from influxdb import InfluxDBClient
 from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
@@ -38,13 +46,8 @@ load_dotenv()
 logger = logging.getLogger("service")
 
 
-# ---------- Config ----------
+# ---------- Config (env) ----------
 def _get(name: str, default: Optional[str] = None, cast: Any = str) -> Any:
-    """Читает переменную окружения и приводит к нужному типу.
-
-    Бросает :class:`RuntimeError` с понятным сообщением, если значение
-    не задано (и нет default) или не приводится к ``cast``.
-    """
     raw = os.getenv(name)
     if raw is None:
         if default is None:
@@ -78,7 +81,141 @@ FAN_PORT = os.getenv("FAN_PORT") or None
 FAN_BAUDRATE = _get("FAN_BAUDRATE", str(DEFAULT_BAUD_RATE), int)
 FAN_TIMEOUT = _get("FAN_TIMEOUT", str(DEFAULT_TIMEOUT), float)
 
+# Fan control defaults (overridable at runtime through /api/config).
+# Defaults рассчитаны на температуру GPU (nvidia-smi), не на DS18B20.
+FAN_TEMP_MIN = _get("FAN_TEMP_MIN", "50.0", float)
+FAN_TEMP_MAX = _get("FAN_TEMP_MAX", "75.0", float)
+FAN_PWM_MIN = _get("FAN_PWM_MIN", "30", int)
+FAN_PWM_MAX = _get("FAN_PWM_MAX", "100", int)
+FAN_HYSTERESIS = _get("FAN_HYSTERESIS", "3.0", float)
+FAN_MODE = _get("FAN_MODE", "auto", str).lower()
+FAN_MANUAL_PWM = _get("FAN_MANUAL_PWM", "0", int)
+
 FLASK_SECRET = _get("FLASK_SECRET", None) or os.urandom(16).hex()
+
+PWM_DEADBAND = 200  # ~0.3% от 65535
+
+
+# ---------- Fan control config (mutable, thread-safe) ----------
+@dataclass
+class FanControlConfig:
+    mode: str = "auto"           # "auto" | "manual"
+    temp_min: float = 50.0       # °C GPU - порог включения
+    temp_max: float = 75.0       # °C GPU - порог полных оборотов
+    pwm_min: int = 30            # % - минимальный ШИМ
+    pwm_max: int = 100           # % - максимальный ШИМ
+    hysteresis: float = 3.0      # °C - запас от temp_min при остывании
+    manual_pwm: int = 0          # % - ШИМ в ручном режиме
+
+    def validate(self) -> None:
+        if self.mode not in ("auto", "manual"):
+            raise ValueError(f"mode должен быть 'auto' или 'manual'")
+        if not (-50 <= self.temp_min <= 150):
+            raise ValueError(f"temp_min {self.temp_min} вне [-50..150]")
+        if not (-50 <= self.temp_max <= 150):
+            raise ValueError(f"temp_max {self.temp_max} вне [-50..150]")
+        if self.temp_min >= self.temp_max:
+            raise ValueError("temp_min должен быть < temp_max")
+        if not (0 <= self.pwm_min <= 100):
+            raise ValueError("pwm_min должен быть 0..100")
+        if not (0 <= self.pwm_max <= 100):
+            raise ValueError("pwm_max должен быть 0..100")
+        if self.pwm_min > self.pwm_max:
+            raise ValueError("pwm_min должен быть <= pwm_max")
+        if not (0 <= self.hysteresis <= 20):
+            raise ValueError("hysteresis должен быть 0..20")
+        if not (0 <= self.manual_pwm <= 100):
+            raise ValueError("manual_pwm должен быть 0..100")
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        d["pwm_min_duty"] = self._pct_to_duty(self.pwm_min)
+        d["pwm_max_duty"] = self._pct_to_duty(self.pwm_max)
+        d["manual_pwm_duty"] = self._pct_to_duty(self.manual_pwm)
+        return d
+
+    @staticmethod
+    def _pct_to_duty(pct: int) -> int:
+        return int(pct * 65535 / 100)
+
+
+@dataclass
+class FanLoopState:
+    direction: int = 0   # -1 cooling, 0 init, 1 heating
+    last_duty: int = 0
+
+
+@dataclass
+class SharedMetrics:
+    """Потокобезопасное состояние между фоновыми задачами."""
+    gpu_temperature: Optional[float] = None
+    gpu_last_update: float = 0.0
+    fan_last_pwm: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+shared_metrics = SharedMetrics()
+
+
+_control_lock = threading.RLock()
+_control_config = FanControlConfig(
+    mode=FAN_MODE,
+    temp_min=FAN_TEMP_MIN,
+    temp_max=FAN_TEMP_MAX,
+    pwm_min=FAN_PWM_MIN,
+    pwm_max=FAN_PWM_MAX,
+    hysteresis=FAN_HYSTERESIS,
+    manual_pwm=FAN_MANUAL_PWM,
+)
+try:
+    _control_config.validate()
+except ValueError as exc:
+    logger.error("Некорректная начальная FAN-конфигурация (%s); сброс к defaults", exc)
+    _control_config = FanControlConfig()
+
+
+def get_config() -> FanControlConfig:
+    with _control_lock:
+        return FanControlConfig(**asdict(_control_config))
+
+
+def update_config(updates: dict) -> FanControlConfig:
+    if not isinstance(updates, dict):
+        raise ValueError("Ожидается JSON-объект")
+    with _control_lock:
+        candidate = asdict(_control_config)
+        for k, v in updates.items():
+            if hasattr(_control_config, k):
+                candidate[k] = v
+        validated = FanControlConfig(**candidate)
+        validated.validate()
+        # Commit только если валидация прошла
+        for k, v in asdict(validated).items():
+            setattr(_control_config, k, v)
+        return FanControlConfig(**asdict(_control_config))
+
+
+def compute_target_duty(temp: float, cfg: FanControlConfig, state: FanLoopState) -> int:
+    """Возвращает duty_cycle (0..65535) по кривой. Мутирует ``state.direction``."""
+    if cfg.mode == "manual":
+        state.direction = 0
+        return FanControlConfig._pct_to_duty(cfg.manual_pwm)
+
+    if temp >= cfg.temp_max:
+        state.direction = 1
+        return FanControlConfig._pct_to_duty(cfg.pwm_max)
+
+    eff_min = cfg.temp_min - cfg.hysteresis if state.direction == -1 else cfg.temp_min
+
+    if temp <= eff_min:
+        state.direction = -1
+        return FanControlConfig._pct_to_duty(cfg.pwm_min)
+
+    ratio = (temp - eff_min) / (cfg.temp_max - eff_min)
+    ratio = max(0.0, min(1.0, ratio))
+    pwm_pct = cfg.pwm_min + ratio * (cfg.pwm_max - cfg.pwm_min)
+    state.direction = 1 if ratio > 0.5 else -1
+    return FanControlConfig._pct_to_duty(int(pwm_pct))
 
 
 # ---------- Logging ----------
@@ -183,7 +320,7 @@ def fetch_gpu_info() -> Optional[dict]:
 
 
 def parse_fan_response(response: str) -> Optional[dict]:
-    """Ожидаемый формат от Pico: ``'<temperature>;<pwm_duty_cycle>'``."""
+    """Ожидаемый формат: ``'<temperature>;<pwm_duty_cycle>'``."""
     if not response:
         return None
     try:
@@ -197,6 +334,7 @@ def parse_fan_response(response: str) -> Optional[dict]:
         "timestamp": datetime.now(timezone.utc).timestamp() * 1000,
         "temperature": temperature,
         "fanSpeedPercentage": round(pwm / 65535 * 100, 2),
+        "pwm_duty": pwm,
     }
 
 
@@ -214,50 +352,152 @@ def background_gpu_task() -> None:
                     socketio.emit("gpu_data", data)
                 except Exception:
                     logger.exception("WebSocket emit gpu_data: ошибка")
+                with shared_metrics._lock:
+                    shared_metrics.gpu_temperature = data["temperature"]
+                    shared_metrics.gpu_last_update = time.time()
         except Exception:
             logger.exception("background_gpu_task: ошибка итерации")
         socketio.sleep(POLL_INTERVAL)
 
 
 def background_fan_task() -> None:
-    logger.info("Старт опроса вентилятора")
+    """Управляющий цикл по **температуре GPU**.
+
+    Всегда испускает ``fan_data`` (с текущим решением контура управления),
+    даже если Pico недоступна. Это гарантирует, что график в веб-интерфейсе
+    показывает Fan % и Fan target, а не только GPU-температуру.
+    """
+    logger.info("Старт контура управления вентилятором (по температуре GPU)")
     backoff = 1.0
+    loop_state = FanLoopState()
+    fc: Optional[ FanController] = None
+
     while True:
         try:
-            with FanController(
-                port=FAN_PORT,
-                baudrate=FAN_BAUDRATE,
-                timeout=FAN_TIMEOUT,
-            ) as fc:
-                logger.info("Подключено к Pico на %s", fc.port)
-                backoff = 1.0
-                while True:
-                    try:
-                        response = fc.send_command("temperature,pwm")
-                        data = parse_fan_response(response)
-                    except TimeoutError as exc:
-                        logger.warning("Pico: %s", exc)
-                        data = None
-                    except (serial.SerialException, OSError) as exc:
-                        logger.warning("Pico: потеря связи: %s", exc)
-                        break
-                    except Exception:
-                        logger.exception("Pico: неожиданная ошибка")
-                        data = None
+            cfg = get_config()
+            with shared_metrics._lock:
+                gpu_temp = shared_metrics.gpu_temperature
+                gpu_last = shared_metrics.gpu_last_update
+                last_pwm = shared_metrics.fan_last_pwm
 
-                    if data is not None:
-                        tags = {"gpu": GPU_TAG}
-                        fields = {
-                            k: v for k, v in data.items() if k != "timestamp"
-                        }
-                        write_influx(INFLUX_MEAS_FAN, fields, tags)
-                    socketio.sleep(POLL_INTERVAL)
+            gpu_age = time.time() - gpu_last if gpu_last > 0 else float("inf")
+            gpu_fresh = gpu_temp is not None and gpu_age < POLL_INTERVAL * 5
+
+            if gpu_fresh:
+                target_duty = compute_target_duty(gpu_temp, cfg, loop_state)
+            else:
+                # Нет свежих данных GPU - удерживаем последнее решение
+                target_duty = last_pwm
+
+            # Best-effort взаимодействие с Pico
+            current_duty = last_pwm
+            pico_temp: Optional[float] = None
+            pico_ok = False
+
+            if fc is None:
+                try:
+                    fc = FanController(
+                        port=FAN_PORT,
+                        baudrate=FAN_BAUDRATE,
+                        timeout=FAN_TIMEOUT,
+                    )
+                    fc.open()
+                    logger.info("Подключено к Pico на %s", fc.port)
+                    backoff = 1.0
+                except (serial.SerialException, OSError) as exc:
+                    logger.debug("Pico connect: %s", exc)
+                    fc = None
+                except Exception:
+                    logger.exception("Pico: неожиданная ошибка подключения")
+                    fc = None
+
+            if fc is not None:
+                try:
+                    response = fc.send_command("temperature,pwm")
+                    parsed = parse_fan_response(response)
+                    if parsed is not None:
+                        current_duty = parsed["pwm_duty"]
+                        pico_temp = parsed["temperature"]
+                        pico_ok = True
+                except TimeoutError as exc:
+                    logger.warning("Pico read timeout: %s", exc)
+                except (serial.SerialException, OSError) as exc:
+                    logger.warning("Pico read failed: %s", exc)
+                    try:
+                        fc.close()
+                    except Exception:
+                        pass
+                    fc = None
+                    backoff = min(backoff * 2, 30.0)
+                except Exception:
+                    logger.exception("Pico: неожиданная ошибка чтения")
+
+                if pico_ok and abs(target_duty - current_duty) > PWM_DEADBAND:
+                    try:
+                        fc.send_command(str(target_duty))
+                        current_duty = target_duty
+                        logger.debug(
+                            "PWM: %d -> %d (GPU_T=%.1f°C, mode=%s)",
+                            last_pwm, target_duty,
+                            gpu_temp if gpu_fresh else float("nan"),
+                            cfg.mode,
+                        )
+                    except (serial.SerialException, OSError) as exc:
+                        logger.warning("Pico write failed: %s", exc)
+                        try:
+                            fc.close()
+                        except Exception:
+                            pass
+                        fc = None
+                        backoff = min(backoff * 2, 30.0)
+                    except Exception:
+                        logger.exception("Pico: неожиданная ошибка записи")
+
+            with shared_metrics._lock:
+                shared_metrics.fan_last_pwm = current_duty
+
+            # Всегда испускаем fan_data (даже если Pico недоступна)
+            fan_pct = round(current_duty / 65535 * 100, 2)
+            target_pct = round(target_duty / 65535 * 100, 2)
+            state = {
+                "timestamp": time.time() * 1000,
+                "gpuTemperature": gpu_temp if gpu_fresh else None,
+                "picoTemperature": pico_temp,
+                "pwm_duty": current_duty,
+                "target_duty": target_duty,
+                "fanSpeedPercentage": fan_pct,
+                "targetPct": target_pct,
+                "mode": cfg.mode,
+            }
+
+            tags = {"gpu": GPU_TAG}
+            fields = {
+                "fanSpeedPercentage": fan_pct,
+                "targetPct": target_pct,
+                "pwm_duty": current_duty,
+                "target_duty": target_duty,
+            }
+            if gpu_fresh:
+                fields["gpuTemperature"] = gpu_temp
+                fields["temperature"] = gpu_temp  # backward compat
+            if pico_temp is not None:
+                fields["picoTemperature"] = pico_temp
+            write_influx(INFLUX_MEAS_FAN, fields, tags)
+
+            try:
+                socketio.emit("fan_data", state)
+            except Exception:
+                logger.exception("WebSocket emit fan_data: ошибка")
+
+            if fc is None:
+                socketio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+            else:
+                socketio.sleep(POLL_INTERVAL)
         except Exception:
-            logger.exception(
-                "background_fan_task: переподключение через %.1fс", backoff
-            )
-        socketio.sleep(backoff)
-        backoff = min(backoff * 2, 30.0)
+            logger.exception("background_fan_task: ошибка итерации")
+            socketio.sleep(min(backoff, 30.0))
+            backoff = min(backoff * 2, 30.0)
 
 
 # ---------- HTTP routes ----------
@@ -272,6 +512,39 @@ def index() -> Any:
 @app.route("/health")
 def health() -> Any:
     return {"status": "ok"}
+
+
+@app.route("/api/config", methods=["GET"])
+def api_get_config() -> Any:
+    return jsonify(get_config().to_dict())
+
+
+@app.route("/api/config", methods=["POST"])
+def api_set_config() -> Any:
+    try:
+        payload = request.get_json(force=True, silent=False)
+    except Exception as exc:
+        return jsonify({"error": f"Некорректный JSON: {exc}"}), 400
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Ожидается JSON-объект"}), 400
+    try:
+        new_cfg = update_config(payload)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logger.exception("update_config failed")
+        return jsonify({"error": f"Внутренняя ошибка: {exc}"}), 500
+    try:
+        socketio.emit("config_update", new_cfg.to_dict())
+    except Exception:
+        logger.exception("WebSocket emit config_update: ошибка")
+    logger.info(
+        "Fan config updated: mode=%s temp=[%.1f..%.1f] pwm=[%d..%d] hyst=%.1f manual=%d",
+        new_cfg.mode, new_cfg.temp_min, new_cfg.temp_max,
+        new_cfg.pwm_min, new_cfg.pwm_max,
+        new_cfg.hysteresis, new_cfg.manual_pwm,
+    )
+    return jsonify(new_cfg.to_dict())
 
 
 # ---------- Main ----------
@@ -296,6 +569,13 @@ def main() -> int:
             "FanController при старте: %s (фоновый поток будет ретраить)", exc
         )
 
+    logger.info(
+        "Fan control: mode=%s T=[%.1f..%.1f]°C PWM=[%d..%d]%% hyst=%.1f°C manual=%d%%",
+        _control_config.mode, _control_config.temp_min, _control_config.temp_max,
+        _control_config.pwm_min, _control_config.pwm_max,
+        _control_config.hysteresis, _control_config.manual_pwm,
+    )
+
     socketio.start_background_task(background_gpu_task)
     socketio.start_background_task(background_fan_task)
 
@@ -313,9 +593,7 @@ def main() -> int:
     except OSError as exc:
         logger.error(
             "Не удалось запустить HTTP-сервер на %s:%s: %s",
-            HTTP_HOST,
-            HTTP_PORT,
-            exc,
+            HTTP_HOST, HTTP_PORT, exc,
         )
         return 1
     except Exception:
