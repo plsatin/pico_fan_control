@@ -582,7 +582,7 @@
           labels: [],
           datasets: [
             { label: 'GPU °C',     data: [], borderColor: '#f5a44d', backgroundColor: gradGpu,  yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,  lastPointRadius: 3 },
-            { label: 'Pico °C',    data: [], borderColor: '#ef5d7e', backgroundColor: gradPico, yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: false, lastPointRadius: 3 },
+            { label: 'Pico °C',    data: [], borderColor: '#ef5d7e', backgroundColor: gradPico, yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,  lastPointRadius: 3 },
             { label: 'Fan %',      data: [], borderColor: '#4ec5d6', backgroundColor: gradFan,  yAxisID: 'pct',  tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,  lastPointRadius: 3 },
             { label: 'Fan target', data: [], borderColor: '#4ec5d6', backgroundColor: 'transparent', yAxisID: 'pct', tension: 0.0,  borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, borderDash: [4, 4], spanGaps: true },
           ],
@@ -655,7 +655,13 @@
 
     function pushPoint(fields) {
       const now = fields.timestamp || Date.now();
-      let entry = state.buffer.find(d => Math.abs(d.timestamp - now) < 1500);
+      // Find the closest existing entry within 5s (gpu/fan tasks can drift up to ~2s)
+      let entry = null, bestDiff = 5000;
+      for (let i = state.buffer.length - 1; i >= 0; i--) {
+        const diff = Math.abs(state.buffer[i].timestamp - now);
+        if (diff <= bestDiff) { entry = state.buffer[i]; bestDiff = diff; }
+        else break; // buffer is sorted, further entries are even older
+      }
       if (!entry) {
         entry = { timestamp: now };
         state.buffer.push(entry);
@@ -711,15 +717,15 @@
         // fan_data: {gpuTemperature, picoTemperature, fanSpeedPercentage, target_duty, targetPct, mode, ...}
         const gpuT = fan.gpuTemperature;
         const picoT = fan.picoTemperature;
-        const wasOnline = state.picoOnline;
-        const isOnline = picoT !== undefined && picoT !== null;
-        if (isOnline !== wasOnline) {
+        if (picoT !== undefined && picoT !== null) state.lastPicoTs = Date.now();
+        const isOnline = (picoT !== undefined && picoT !== null)
+          || (state.lastPicoTs && Date.now() - state.lastPicoTs < 5000);
+        if (isOnline !== state.picoOnline) {
           state.picoOnline = isOnline;
           updatePicoStatus(isOnline);
           if (state.chart) state.chart.update('none');
         }
-        if (isOnline) {
-          state.lastPicoTs = Date.now();
+        if (picoT !== undefined && picoT !== null) {
           setKpiBig('kpi-pico-temp', picoT, '°C');
           setBar('kpi-pico-bar', picoT, 100);
           setText('kpi-pico-sub', 'DS18B20 · онлайн');
