@@ -3,3 +3,4 @@ matplotlib
 influxdb
 flask
 flask_socketio
+python-dotenv

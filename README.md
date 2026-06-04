@@ -8,7 +8,21 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
+cp .env.example .env
+notepad .env   # заполните INFLUXDB_* и при необходимости FAN_PORT
 ```
+
+## Запуск
+
+```powershell
+python service.py            # http://localhost:3000
+python -m fan_control --help # справка по CLI модуля
+python -m fan_control --list-ports
+```
+
+Все параметры читаются из `.env` (через `python-dotenv`) и могут быть
+переопределены реальными переменными окружения, например
+`INFLUXDB_HOST=10.0.0.5 python service.py`.
 
 
 ## Схема подключения оборудования
