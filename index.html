@@ -102,7 +102,22 @@
       letter-spacing: 0.08em;
       color: var(--text-dim);
       margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
     }
+    .pico-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--text-faint);
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .pico-dot.live {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+    .kpi.pico.offline .kpi-value { color: var(--text-faint); }
+    .kpi.pico.offline .kpi-sub   { color: var(--danger); }
     .kpi-value {
       font-size: 32px;
       font-weight: 600;
@@ -370,8 +385,11 @@
         <div class="kpi-sub" id="kpi-gpu-sub">ожидание данных</div>
         <div class="kpi-bar"><i id="kpi-gpu-bar" style="width: 0%"></i></div>
       </div>
-      <div class="kpi pico">
-        <div class="kpi-label">Pico Temperature</div>
+      <div class="kpi pico" id="kpi-pico-card">
+        <div class="kpi-label">
+          <span>Pico Temperature</span>
+          <span class="pico-dot" id="kpi-pico-dot" title="статус DS18B20"></span>
+        </div>
         <div class="kpi-value" id="kpi-pico-temp">—<span class="unit">°C</span></div>
         <div class="kpi-sub" id="kpi-pico-sub">DS18B20 · мониторинг</div>
         <div class="kpi-bar"><i id="kpi-pico-bar" style="width: 0%"></i></div>
@@ -490,14 +508,62 @@
       config: null,
       serverConfig: null,
       buffer: [],
-      chart: null,
+      chart: [],
       socket: null,
       lastGpuTs: 0,
       lastFanTs: 0,
+      picoOnline: false,
+      lastPicoTs: 0,
     };
     const MAX_POINTS = 60; // ~2 минуты при 2с интервале
 
     // ---------- Chart ----------
+    const lastPointPlugin = {
+      id: 'lastPoint',
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        chart.data.datasets.forEach((ds, i) => {
+          const r = ds.lastPointRadius;
+          if (!r) return;
+          const data = ds.data;
+          if (!data || !data.length) return;
+          const lastIdx = data.length - 1;
+          const v = data[lastIdx];
+          if (v === null || v === undefined) return;
+          const meta = chart.getDatasetMeta(i);
+          if (!meta || !meta.data || !meta.data[lastIdx]) return;
+          const point = meta.data[lastIdx];
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, r, 0, Math.PI * 2);
+          ctx.fillStyle = ds.borderColor;
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#0b0e14';
+          ctx.stroke();
+          ctx.restore();
+        });
+      },
+    };
+
+    const statusOverlayPlugin = {
+      id: 'statusOverlay',
+      afterDraw(chart) {
+        if (state.picoOnline) return;
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.fillStyle = 'rgba(232,85,91,0.10)';
+        ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
+        ctx.fillStyle = 'rgba(232,85,91,0.85)';
+        ctx.font = '600 13px -apple-system, "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const text = 'Pico не подключена — нет данных DS18B20 и ШИМ';
+        ctx.fillText(text, (chartArea.left + chartArea.right) / 2, chartArea.top + 18);
+        ctx.restore();
+      },
+    };
+
     function initChart() {
       const ctx = document.getElementById('chart').getContext('2d');
       const gradGpu = ctx.createLinearGradient(0, 0, 0, 320);
@@ -515,12 +581,13 @@
         data: {
           labels: [],
           datasets: [
-            { label: 'GPU °C',     data: [], borderColor: '#f5a44d', backgroundColor: gradGpu,  yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
-            { label: 'Pico °C',    data: [], borderColor: '#ef5d7e', backgroundColor: gradPico, yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
-            { label: 'Fan %',      data: [], borderColor: '#4ec5d6', backgroundColor: gradFan,  yAxisID: 'pct',  tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4 },
-            { label: 'Fan target', data: [], borderColor: '#4ec5d6', backgroundColor: 'transparent', yAxisID: 'pct', tension: 0.35, borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, borderDash: [3, 3] },
+            { label: 'GPU °C',     data: [], borderColor: '#f5a44d', backgroundColor: gradGpu,  yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,  lastPointRadius: 3 },
+            { label: 'Pico °C',    data: [], borderColor: '#ef5d7e', backgroundColor: gradPico, yAxisID: 'temp', tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: false, lastPointRadius: 3 },
+            { label: 'Fan %',      data: [], borderColor: '#4ec5d6', backgroundColor: gradFan,  yAxisID: 'pct',  tension: 0.35, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, spanGaps: true,  lastPointRadius: 3 },
+            { label: 'Fan target', data: [], borderColor: '#4ec5d6', backgroundColor: 'transparent', yAxisID: 'pct', tension: 0.0,  borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, borderDash: [4, 4], spanGaps: true },
           ],
         },
+        plugins: [lastPointPlugin, statusOverlayPlugin],
         options: {
           responsive: true,
           maintainAspectRatio: false,
@@ -529,7 +596,25 @@
           plugins: {
             legend: {
               position: 'top', align: 'end',
-              labels: { color: '#8a93a3', boxWidth: 10, boxHeight: 10, usePointStyle: true, padding: 16, font: { size: 12 } },
+              labels: { color: '#8a93a3', boxWidth: 10, boxHeight: 10, usePointStyle: true, padding: 16, font: { size: 12 },
+                generateLabels(chart) {
+                  const base = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                  return base.map((l, i) => {
+                    if (i === 1) {
+                      l.text = state.picoOnline ? 'Pico °C' : 'Pico °C · offline';
+                      l.fillStyle = state.picoOnline ? '#ef5d7e' : '#555c6a';
+                      l.strokeStyle = l.fillStyle;
+                      l.fontColor = state.picoOnline ? '#8a93a3' : '#555c6a';
+                    }
+                    return l;
+                  });
+                },
+              },
+              onClick(e, item, legend) {
+                const ci = legend.chart;
+                if (item.index === 1 && !state.picoOnline) return;
+                Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
+              },
             },
             tooltip: {
               backgroundColor: '#151921',
@@ -626,16 +711,28 @@
         // fan_data: {gpuTemperature, picoTemperature, fanSpeedPercentage, target_duty, targetPct, mode, ...}
         const gpuT = fan.gpuTemperature;
         const picoT = fan.picoTemperature;
+        const wasOnline = state.picoOnline;
+        const isOnline = picoT !== undefined && picoT !== null;
+        if (isOnline !== wasOnline) {
+          state.picoOnline = isOnline;
+          updatePicoStatus(isOnline);
+          if (state.chart) state.chart.update('none');
+        }
+        if (isOnline) {
+          state.lastPicoTs = Date.now();
+          setKpiBig('kpi-pico-temp', picoT, '°C');
+          setBar('kpi-pico-bar', picoT, 100);
+          setText('kpi-pico-sub', 'DS18B20 · онлайн');
+        } else {
+          setKpiBig('kpi-pico-temp', null, '°C');
+          setBar('kpi-pico-bar', 0, 100);
+          setText('kpi-pico-sub', 'Pico не подключена');
+        }
         if (gpuT !== undefined && gpuT !== null) {
           setKpiBig('kpi-gpu-temp', gpuT, '°C');
           setBar('kpi-gpu-bar', gpuT, 100);
           pushPoint({ gpuTemp: gpuT });
         }
-        if (picoT !== undefined && picoT !== null) {
-          setKpiBig('kpi-pico-temp', picoT, '°C');
-          setBar('kpi-pico-bar', picoT, 100);
-        }
-        setText('kpi-pico-sub', 'DS18B20 · мониторинг');
         setKpiBig('kpi-fan', fan.fanSpeedPercentage, '%');
         setBar('kpi-fan-bar', fan.fanSpeedPercentage, 100);
         const mode = (fan.mode || 'auto').toUpperCase();
@@ -649,6 +746,13 @@
           fanTarget: tgtPct,
         });
       }
+    }
+
+    function updatePicoStatus(online) {
+      const card = document.getElementById('kpi-pico-card');
+      const dot  = document.getElementById('kpi-pico-dot');
+      if (card) card.classList.toggle('offline', !online);
+      if (dot)  dot.classList.toggle('live', online);
     }
 
     // ---------- Curve preview ----------
@@ -851,6 +955,7 @@
     // ---------- Init ----------
     window.addEventListener('DOMContentLoaded', () => {
       initChart();
+      updatePicoStatus(false);
       bindSliders();
       bindModeToggle();
       bindActions();
