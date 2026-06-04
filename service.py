@@ -124,7 +124,7 @@ def fetch_fan_info():
     fan_speed_percent = 0.0
     no_error_data = True
 
-    cmd = 'python fan_control.py temperature,pwm'
+    cmd = 'python fan_control.py temperature,pwm -p /dev/ttyACM0'
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
         values = result.stdout.strip()
