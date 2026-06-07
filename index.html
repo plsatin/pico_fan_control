@@ -217,6 +217,26 @@
     }
     .mode-pill.manual .dot { background: var(--fan); }
 
+    /* Status card (current mode summary) */
+    .status-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 2fr auto;
+      gap: 20px;
+      align-items: center;
+    }
+    .status-stat-label {
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-dim); margin-bottom: 4px;
+    }
+    .status-stat-value {
+      font-size: 22px; font-weight: 600;
+      letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .status-stat-value.small { font-size: 14px; color: var(--text-dim); }
+    .status-stat-value .unit { font-size: 12px; color: var(--text-dim); margin-left: 2px; }
+
     /* Sliders */
     .sliders {
       display: grid;
@@ -341,6 +361,67 @@
     .toast.error { border-color: var(--danger); color: var(--danger); }
     .toast.success { border-color: var(--success); }
 
+    /* Header button */
+    .header-actions { display: flex; align-items: center; gap: 10px; }
+    .icon-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .icon-btn:hover { background: var(--border); border-color: var(--border-strong); }
+    .icon-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(5, 7, 11, 0.72);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 900;
+    }
+    .modal-overlay.open { opacity: 1; }
+    .modal-overlay[hidden] { display: none; }
+    .modal {
+      background: var(--bg-elev);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      width: min(720px, calc(100vw - 32px));
+      max-height: calc(100vh - 64px);
+      display: flex; flex-direction: column;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+      transform: translateY(8px) scale(0.98);
+      transition: transform 0.2s;
+    }
+    .modal-overlay.open .modal { transform: translateY(0) scale(1); }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-title { font-size: 15px; font-weight: 600; }
+    .modal-sub   { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+    .modal-close {
+      background: transparent; border: none; color: var(--text-dim);
+      width: 32px; height: 32px; border-radius: 8px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .modal-close:hover { background: var(--border); color: var(--text); }
+    .modal-close svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .modal-body {
+      padding: 22px;
+      overflow-y: auto;
+    }
+    body.modal-open { overflow: hidden; }
+
     /* Footer */
     .footer {
       text-align: center;
@@ -372,9 +453,15 @@
           <div class="brand-sub">Smart temperature-driven fan</div>
         </div>
       </div>
-      <div class="status" id="conn-status">
-        <div class="status-dot" id="conn-dot"></div>
-        <span id="conn-text">Подключение…</span>
+      <div class="header-actions">
+        <div class="status" id="conn-status">
+          <div class="status-dot" id="conn-dot"></div>
+          <span id="conn-text">Подключение…</span>
+        </div>
+        <button class="icon-btn" id="open-fan-modal" type="button" title="Управление вентилятором">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Управление
+        </button>
       </div>
     </header>
 
@@ -416,84 +503,114 @@
       <div class="chart-wrap"><canvas id="chart"></canvas></div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="fan-status-card">
       <div class="panel-head">
         <div>
-          <div class="panel-title">Fan Control</div>
-          <div class="panel-sub">Кривая оборотов по температуре <b>GPU</b> (nvidia-smi)</div>
+          <div class="panel-title">Текущий режим</div>
+          <div class="panel-sub">Контур управления вентилятором</div>
         </div>
         <div id="mode-pill" class="mode-pill"><span class="dot"></span><span>Auto</span></div>
       </div>
-
-      <div style="display: flex; gap: 18px; align-items: center; flex-wrap: wrap;">
-        <div class="mode-toggle" id="mode-toggle">
-          <button data-mode="auto" class="active">Auto</button>
-          <button data-mode="manual">Manual</button>
+      <div class="status-row">
+        <div class="status-stat">
+          <div class="status-stat-label">PWM</div>
+          <div class="status-stat-value" id="card-pwm">—<span class="unit">%</span></div>
         </div>
-      </div>
-
-      <div class="sliders" id="auto-controls">
-        <div class="slider">
-          <label>Start temperature</label>
-          <input type="range" id="s-temp-min" min="30" max="90" step="1" value="50">
-          <div class="val" id="s-temp-min-val">50 °C</div>
+        <div class="status-stat">
+          <div class="status-stat-label">Target</div>
+          <div class="status-stat-value" id="card-target">—<span class="unit">%</span></div>
         </div>
-        <div class="slider">
-          <label>End temperature</label>
-          <input type="range" id="s-temp-max" min="30" max="100" step="1" value="75">
-          <div class="val" id="s-temp-max-val">75 °C</div>
+        <div class="status-stat">
+          <div class="status-stat-label">Кривая</div>
+          <div class="status-stat-value small" id="card-curve">50 → 75 °C</div>
         </div>
-        <div class="slider">
-          <label>Min PWM</label>
-          <input type="range" id="s-pwm-min" min="0" max="100" step="1" value="30">
-          <div class="val" id="s-pwm-min-val">30 %</div>
-        </div>
-        <div class="slider">
-          <label>Max PWM</label>
-          <input type="range" id="s-pwm-max" min="0" max="100" step="1" value="100">
-          <div class="val" id="s-pwm-max-val">100 %</div>
-        </div>
-        <div class="slider">
-          <label>Hysteresis</label>
-          <input type="range" id="s-hysteresis" min="0" max="10" step="0.5" value="3">
-          <div class="val" id="s-hysteresis-val">3.0 °C</div>
-        </div>
-      </div>
-
-      <div class="sliders" id="manual-controls" style="display: none;">
-        <div class="slider">
-          <label>Manual PWM</label>
-          <input type="range" id="s-manual-pwm" min="0" max="100" step="1" value="0">
-          <div class="val" id="s-manual-pwm-val">0 %</div>
-        </div>
-      </div>
-
-      <div class="curve">
-        <div class="curve-head">
-          <span>Кривая ШИМ (от температуры GPU)</span>
-          <span id="curve-label">50 °C → 30 %, 75 °C → 100 %</span>
-        </div>
-        <svg id="curve-svg" viewBox="0 0 400 80" preserveAspectRatio="none">
-          <line x1="0" y1="0" x2="400" y2="0" stroke="var(--border)" stroke-width="0.5"/>
-          <line x1="0" y1="80" x2="400" y2="80" stroke="var(--border)" stroke-width="0.5"/>
-          <line x1="0" y1="40" x2="400" y2="40" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2 4"/>
-          <path id="curve-path" d="" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
-          <path id="curve-fill" d="" fill="url(#curve-grad)" opacity="0.18"/>
-          <defs>
-            <linearGradient id="curve-grad" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stop-color="var(--accent)"/>
-              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
-            </linearGradient>
-          </defs>
-        </svg>
-      </div>
-
-      <div class="actions">
-        <button class="btn" id="apply-btn">Apply changes</button>
-        <button class="btn btn-ghost" id="reset-btn">Reset</button>
-        <span id="dirty" class="dirty" style="display: none;">Есть несохранённые изменения</span>
+        <button class="btn" id="open-fan-modal-inline" type="button">Изменить</button>
       </div>
     </section>
+
+    <div class="modal-overlay" id="fan-modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="fan-modal-title">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title" id="fan-modal-title">Управление вентилятором</div>
+            <div class="modal-sub">Кривая оборотов по температуре <b>GPU</b> (nvidia-smi)</div>
+          </div>
+          <button class="modal-close" id="close-fan-modal" type="button" aria-label="Закрыть">
+            <svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div style="display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 18px;">
+            <div class="mode-toggle" id="mode-toggle">
+              <button data-mode="auto" class="active">Auto</button>
+              <button data-mode="manual">Manual</button>
+            </div>
+          </div>
+
+          <div class="sliders" id="auto-controls">
+            <div class="slider">
+              <label>Start temperature</label>
+              <input type="range" id="s-temp-min" min="30" max="90" step="1" value="50">
+              <div class="val" id="s-temp-min-val">50 °C</div>
+            </div>
+            <div class="slider">
+              <label>End temperature</label>
+              <input type="range" id="s-temp-max" min="30" max="100" step="1" value="75">
+              <div class="val" id="s-temp-max-val">75 °C</div>
+            </div>
+            <div class="slider">
+              <label>Min PWM</label>
+              <input type="range" id="s-pwm-min" min="0" max="100" step="1" value="30">
+              <div class="val" id="s-pwm-min-val">30 %</div>
+            </div>
+            <div class="slider">
+              <label>Max PWM</label>
+              <input type="range" id="s-pwm-max" min="0" max="100" step="1" value="100">
+              <div class="val" id="s-pwm-max-val">100 %</div>
+            </div>
+            <div class="slider">
+              <label>Hysteresis</label>
+              <input type="range" id="s-hysteresis" min="0" max="10" step="0.5" value="3">
+              <div class="val" id="s-hysteresis-val">3.0 °C</div>
+            </div>
+          </div>
+
+          <div class="sliders" id="manual-controls" style="display: none;">
+            <div class="slider">
+              <label>Manual PWM</label>
+              <input type="range" id="s-manual-pwm" min="0" max="100" step="1" value="0">
+              <div class="val" id="s-manual-pwm-val">0 %</div>
+            </div>
+          </div>
+
+          <div class="curve">
+            <div class="curve-head">
+              <span>Кривая ШИМ (от температуры GPU)</span>
+              <span id="curve-label">50 °C → 30 %, 75 °C → 100 %</span>
+            </div>
+            <svg id="curve-svg" viewBox="0 0 400 80" preserveAspectRatio="none">
+              <line x1="0" y1="0" x2="400" y2="0" stroke="var(--border)" stroke-width="0.5"/>
+              <line x1="0" y1="80" x2="400" y2="80" stroke="var(--border)" stroke-width="0.5"/>
+              <line x1="0" y1="40" x2="400" y2="40" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2 4"/>
+              <path id="curve-path" d="" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+              <path id="curve-fill" d="" fill="url(#curve-grad)" opacity="0.18"/>
+              <defs>
+                <linearGradient id="curve-grad" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stop-color="var(--accent)"/>
+                  <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+
+          <div class="actions">
+            <button class="btn" id="apply-btn">Apply changes</button>
+            <button class="btn btn-ghost" id="reset-btn">Reset</button>
+            <span id="dirty" class="dirty" style="display: none;">Есть несохранённые изменения</span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="footer">Pico Fan Control · v2.0</div>
   </div>
@@ -847,6 +964,7 @@
       });
       setMode(cfg.mode, false);
       drawCurve(cfg);
+      updateCardStats();
     }
     function markDirty() {
       document.getElementById('dirty').style.display = 'inline-flex';
@@ -928,6 +1046,46 @@
       });
     }
 
+    // ---------- Modal ----------
+    function openModal() {
+      const ov = document.getElementById('fan-modal');
+      ov.hidden = false;
+      document.body.classList.add('modal-open');
+      requestAnimationFrame(() => ov.classList.add('open'));
+    }
+    function closeModal() {
+      const ov = document.getElementById('fan-modal');
+      ov.classList.remove('open');
+      document.body.classList.remove('modal-open');
+      setTimeout(() => { ov.hidden = true; }, 200);
+    }
+    function bindModal() {
+      document.getElementById('open-fan-modal').addEventListener('click', openModal);
+      document.getElementById('open-fan-modal-inline').addEventListener('click', openModal);
+      document.getElementById('close-fan-modal').addEventListener('click', closeModal);
+      document.getElementById('fan-modal').addEventListener('click', e => {
+        if (e.target.id === 'fan-modal') closeModal();
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !document.getElementById('fan-modal').hidden) closeModal();
+      });
+    }
+
+    // ---------- Card stats (PWM, Target, Curve summary) ----------
+    function updateCardStats() {
+      if (!state.serverConfig) return;
+      const c = state.serverConfig;
+      const fan = state.buffer.length ? state.buffer[state.buffer.length - 1] : null;
+      const pwm = fan ? fan.fanPct : null;
+      const tgt = fan ? fan.fanTarget : null;
+      const pwmEl = document.getElementById('card-pwm');
+      const tgtEl = document.getElementById('card-target');
+      if (pwmEl) pwmEl.innerHTML = (pwm === null || pwm === undefined ? '—' : Number(pwm).toFixed(1)) + '<span class="unit">%</span>';
+      if (tgtEl) tgtEl.innerHTML = (tgt === null || tgt === undefined ? '—' : Number(tgt).toFixed(1)) + '<span class="unit">%</span>';
+      const cvEl = document.getElementById('card-curve');
+      if (cvEl) cvEl.textContent = `${c.temp_min} → ${c.temp_max} °C · ${c.pwm_min}–${c.pwm_max}%`;
+    }
+
     // ---------- WebSocket ----------
     function connect() {
       const dot = document.getElementById('conn-dot');
@@ -949,7 +1107,7 @@
         text.textContent = 'Сервер недоступен';
       });
       sock.on('gpu_data', d => updateKpis(d, null));
-      sock.on('fan_data', d => updateKpis(null, d));
+      sock.on('fan_data', d => { updateKpis(null, d); updateCardStats(); });
       sock.on('config_update', cfg => {
         state.serverConfig = cfg;
         writeSliders(cfg);
@@ -965,6 +1123,7 @@
       bindSliders();
       bindModeToggle();
       bindActions();
+      bindModal();
       connect();
       loadConfig();
     });
