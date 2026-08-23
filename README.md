@@ -23,7 +23,72 @@
 
 
 
-## Подготовка
+## Установка и запуск на Ubuntu 24.04
+
+### 1. Подготовка проекта
+
+```bash
+# Создаём каталог проекта
+sudo mkdir -p /opt/pico_fan_control
+cd /opt/pico_fan_control
+
+# Создаём виртуальное окружение (Python‑3.12)
+python3 -m venv venv
+
+# Активируем и устанавливаем зависимости
+source ./venv/bin/activate
+pip install -r requirements.txt
+
+# Скопируем пример конфигурации и доработайте ее
+cp .env.example .env
+# Откройте .env в редакторе и заполните параметры:
+#   INFLUXDB_HOST, INFLUXDB_PORT, INFLUXDB_TOKEN, etc.
+# При необходимости задайте FAN_PORT, чтобы указать порт платы Pico.
+```
+
+### 2. Запуск
+
+**Вариант 1 – командная строка**
+```bash
+# Запускаем веб‑приложение (по умолчанию http://localhost:3000)
+./venv/bin/python service.py
+```
+
+**Вариант 2 – модуль в режиме «службы» (systemd)**
+Создаём unit‑файл `/etc/systemd/system/pico_fan_control.service`:
+```ini
+[Unit]
+Description=Pico Fan Control Service
+After=network.target
+
+[Service]
+ExecStart=/opt/pico_fan_control/venv/bin/python service.py
+Restart=on-failure
+RestartSec=10
+User=root
+WorkingDirectory=/opt/pico_fan_control
+EnvironmentFile=/opt/pico_fan_control/.env
+
+[Install]
+WantedBy=multi-user.target
+
+``` (файл упакован в репозиторий, же как пример.)
+
+> **Замечание** – если вы запускаете сервис от обычного пользователя, укажите
+> его имя (например, `pi`), иначе убедитесь, что у него хватает прав
+da получить доступ к `/dev/ttyUSB*`/`/dev/ttyACM*`.
+
+Опционально можно указать переменные окружения в `/etc/pico_fan_control.env`.
+
+После создания unit‑файла перезагрузи daemon и включи сервис:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now pico_fan_control
+```
+
+После этого сервис будет автоматически стартовать при загрузке и будет доступен
+по адресу http://localhost:3000.  
+```
 
 ```powershell
 python -m venv venv
